@@ -169,24 +169,51 @@ require([
   /* One level of child instances for a part the user clicked. Never recursive. */
   function loadChildren(it, box) {
     box.textContent = 'Loading children...';
-    get('/resources/v1/modeler/dseng/dseng:EngItem/' + encodeURIComponent(it.id) +
-        '/dseng:EngInstance', true).then(function (d) {
+    var base = '/resources/v1/modeler/dseng/dseng:EngItem/' + encodeURIComponent(it.id) + '/dseng:EngInstance';
+    // Try the Details mask (may expose the child reference); fall back to the plain call if rejected.
+    get(base + '?$mask=dsmveng:EngInstanceMask.Details', true).catch(function () { return get(base, true); })
+    .then(function (d) {
       var members = d.member || [];
       box.textContent = '';
       if (!members.length) { box.textContent = 'No child instances returned (see Raw response).'; return; }
+
+      // Inferred quantity: count instances sharing a base name once the trailing <n> is stripped.
+      var counts = {}, order = [];
+      members.forEach(function (m) {
+        var b = String(m.name || '').replace(/<\d+>$/, '');
+        if (!(b in counts)) { counts[b] = 0; order.push(b); }
+        counts[b]++;
+      });
+      var sum = document.createElement('table');
+      var sh = sum.insertRow();
+      ['Child (instance name without <n>)', 'Instances counted'].forEach(function (h) {
+        var th = document.createElement('th'); th.textContent = h; sh.appendChild(th);
+      });
+      order.sort().forEach(function (b) {
+        var r = sum.insertRow();
+        r.insertCell().textContent = b;
+        r.insertCell().textContent = counts[b];
+      });
+      box.appendChild(sum);
+
+      var det = document.createElement('details');
+      var sm = document.createElement('summary');
+      sm.textContent = 'All ' + members.length + ' instances, every field returned';
+      det.appendChild(sm);
       members.forEach(function (m, i) {
         var h = document.createElement('div');
         h.style.cssText = 'margin-top:6px;font-weight:bold';
         h.textContent = 'Child ' + (i + 1);
-        box.appendChild(h);
+        det.appendChild(h);
         var t = document.createElement('table');
         flatten(m, '', []).forEach(function (r) {
           var row = t.insertRow();
           var a = row.insertCell(); a.textContent = r[0];
           row.insertCell().textContent = r[1];
         });
-        box.appendChild(t);
+        det.appendChild(t);
       });
+      box.appendChild(det);
     }).catch(function (e) { box.textContent = e.message; });
   }
 
@@ -243,7 +270,13 @@ require([
       });
       var msg = all.length + ' revision(s) across ' + (titles.length - missing.length) + ' part(s).';
       if (missing.length) { msg += ' No exact Title match for: ' + missing.join(', ') + '.'; }
-      setStatus(msg, !all.length);
+      var keyCount = {};
+      all.forEach(function (a) { var k = a.title + ' ' + a.revision; keyCount[k] = (keyCount[k] || 0) + 1; });
+      var dups = Object.keys(keyCount).filter(function (k) { return keyCount[k] > 1; });
+      if (dups.length) {
+        msg += ' WARNING: more than one 3DX object shares the same Title and revision: ' + dups.join('; ') + '.';
+      }
+      setStatus(msg, !all.length || dups.length > 0);
       render(all, highlightIds || {});
     }).catch(function (e) { setStatus(e.message, true); });
   }
