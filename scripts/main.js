@@ -1,4 +1,4 @@
-/* Part History widget, version 1. READ-ONLY: every 3DSpace call below is a GET. */
+﻿/* Part History widget, version 1. READ-ONLY: every 3DSpace call below is a GET. */
 /* index.html calls executeInitWidget once the dashboard's `widget` object exists;
    `require` is not available before that. */
 function executeInitWidget(w) {
@@ -11,7 +11,6 @@ require([
 
   var $ = function (id) { return document.getElementById(id); };
   var spaceUrl = null;
-  var droppedId = null;
 
   function setStatus(msg, isErr) {
     var s = $('status');
@@ -97,13 +96,15 @@ require([
   }
   var formatters = { state: prettyState, modified: prettyDate, created: prettyDate };
 
-  /* ---- Table ---- */
-  function render(items, highlightId) {
+  /* ---- Table (one combined table; click a row to load its detail) ---- */
+  var MAX_PARTS = 10;
+  var cols = [['Title', 'title'], ['Revision', 'revision'], ['Maturity', 'state'], ['Modified', 'modified'],
+              ['Created', 'created'], ['Owner', 'owner'], ['3DX Name', 'name']];
+
+  function render(items, highlightIds) {
     var box = $('results');
     box.innerHTML = '';
     if (!items.length) { return; }
-    var cols = [['Revision', 'revision'], ['Maturity', 'state'], ['Modified', 'modified'],
-                ['Created', 'created'], ['Owner', 'owner'], ['3DX Name', 'name']];
     var table = document.createElement('table');
     var head = table.insertRow();
     cols.forEach(function (c) {
@@ -111,60 +112,120 @@ require([
     });
     items.forEach(function (it) {
       var tr = table.insertRow();
-      if (highlightId && (it.id === highlightId)) { tr.className = 'dropped'; }
+      tr.className = 'clickable' + (highlightIds[it.id] ? ' dropped' : '');
       cols.forEach(function (c) {
         var td = tr.insertCell();
         var v = it[c[1]] == null ? '' : it[c[1]];
         td.textContent = formatters[c[1]] ? formatters[c[1]](v) : v;
       });
+      tr.addEventListener('click', function () { toggleDetail(tr, it); });
     });
     box.appendChild(table);
   }
 
-  /* ---- Lookup by exact Title ---- */
-  function lookupTitle(title, highlightId) {
-    title = (title || '').trim();
-    if (!title) { setStatus('Enter a part Title first.', true); return Promise.resolve(); }
-    if (!$('ctx').value) { setStatus('No security context selected.', true); return Promise.resolve(); }
-    setStatus('Looking up "' + title + '"...');
-    $('results').innerHTML = '';
+  function flatten(obj, prefix, out) {
+    Object.keys(obj).forEach(function (k) {
+      var v = obj[k], name = prefix ? prefix + '.' + k : k;
+      if (v !== null && typeof v === 'object' && !Array.isArray(v)) { flatten(v, name, out); }
+      else { out.push([name, Array.isArray(v) ? JSON.stringify(v) : String(v)]); }
+    });
+    return out;
+  }
+
+  function toggleDetail(tr, it) {
+    var next = tr.nextSibling;
+    if (next && next.className === 'detail') { next.parentNode.removeChild(next); return; }
+    var dr = tr.parentNode.insertRow(tr.rowIndex + 1);
+    dr.className = 'detail';
+    var cell = dr.insertCell();
+    cell.colSpan = cols.length;
+    cell.textContent = 'Loading detail...';
+    get('/resources/v1/modeler/dseng/dseng:EngItem/' + encodeURIComponent(it.id) +
+        '?$mask=dsmveng:EngItemMask.Details', true).then(function (d) {
+      var obj = (d.member && d.member[0]) || d;
+      var rows = flatten(obj, '', []);
+      cell.textContent = '';
+      var t = document.createElement('table');
+      rows.forEach(function (r) {
+        var row = t.insertRow();
+        var a = row.insertCell(); a.textContent = r[0]; a.style.fontWeight = 'bold';
+        row.insertCell().textContent = r[1];
+      });
+      cell.appendChild(t);
+    }).catch(function (e) { cell.textContent = e.message; });
+  }
+
+  /* ---- Lookup by exact Title(s), one search per Title, only for what the user entered ---- */
+  function searchTitle(title) {
     var path = '/resources/v1/modeler/dseng/dseng:EngItem/search?$searchStr=' +
                encodeURIComponent(title) + '&$top=50';
     return get(path, true).then(function (data) {
-      var all = data.member || [];
-      var hits = all.filter(function (m) { return m.title === title; });
-      hits.sort(revCompare);
-      if (!hits.length) {
-        setStatus('No part with exact Title "' + title + '" (' + all.length + ' loose matches; see Raw response).', true);
-        return;
-      }
-      setStatus(hits.length + ' revision(s) of ' + title + '.');
-      render(hits, highlightId);
+      return (data.member || []).filter(function (m) { return m.title === title; });
+    });
+  }
+
+  function lookupTitles(titles, highlightIds) {
+    var seen = {};
+    titles = titles.map(function (t) { return (t || '').trim(); })
+                   .filter(function (t) { if (!t || seen[t]) { return false; } seen[t] = true; return true; });
+    if (!titles.length) { setStatus('Enter a part Title first.', true); return Promise.resolve(); }
+    if (titles.length > MAX_PARTS) { titles = titles.slice(0, MAX_PARTS); }
+    if (!$('ctx').value) { setStatus('No security context selected.', true); return Promise.resolve(); }
+    setStatus('Looking up ' + titles.join(', ') + '...');
+    $('results').innerHTML = '';
+    var all = [], missing = [];
+    return titles.reduce(function (chain, t) {
+      return chain.then(function () {
+        return searchTitle(t).then(function (hits) {
+          if (!hits.length) { missing.push(t); }
+          all = all.concat(hits);
+        });
+      });
+    }, Promise.resolve()).then(function () {
+      all.sort(function (a, b) {
+        return a.title === b.title ? revCompare(a, b) : (a.title < b.title ? -1 : 1);
+      });
+      var msg = all.length + ' revision(s) across ' + (titles.length - missing.length) + ' part(s).';
+      if (missing.length) { msg += ' No exact Title match for: ' + missing.join(', ') + '.'; }
+      setStatus(msg, !all.length);
+      render(all, highlightIds || {});
     }).catch(function (e) { setStatus(e.message, true); });
   }
 
-  /* ---- Drag and drop: read dropped part by id, then list its Title's revisions ---- */
+  function lookupFromBox() {
+    lookupTitles($('title').value.split(/[,;\n]/));
+  }
+
+  /* ---- Drag and drop: read every dropped part by id, then list its Title's revisions ---- */
   function onDrop(data) {
     var payload;
     try { payload = typeof data === 'string' ? JSON.parse(data) : data; }
     catch (e) { setStatus('Dropped content was not JSON.', true); return; }
-    var item = payload && payload.data && payload.data.items && payload.data.items[0];
-    if (!item || !item.objectId) { showRaw('DROP payload', payload); setStatus('Could not find an objectId in the dropped item (see Raw response).', true); return; }
-    droppedId = item.objectId;
-    setStatus('Reading dropped part...');
-    get('/resources/v1/modeler/dseng/dseng:EngItem/' + encodeURIComponent(droppedId) +
-        '?$mask=dsmveng:EngItemMask.Details', true).then(function (d) {
-      var obj = (d.member && d.member[0]) || d;
-      if (!obj.title) { setStatus('Dropped item has no Title (is it a Physical Product?).', true); return; }
-      $('title').value = obj.title;
-      return lookupTitle(obj.title, obj.id || droppedId);
+    var items = (payload && payload.data && payload.data.items || []).filter(function (i) { return i && i.objectId; });
+    if (!items.length) { showRaw('DROP payload', payload); setStatus('Could not find an objectId in the dropped item (see Raw response).', true); return; }
+    var skipped = items.length > MAX_PARTS;
+    items = items.slice(0, MAX_PARTS);
+    setStatus('Reading ' + items.length + ' dropped part(s)' + (skipped ? ' (limit ' + MAX_PARTS + ')' : '') + '...');
+    var titles = [], highlight = {};
+    items.reduce(function (chain, item) {
+      return chain.then(function () {
+        return get('/resources/v1/modeler/dseng/dseng:EngItem/' + encodeURIComponent(item.objectId) +
+                   '?$mask=dsmveng:EngItemMask.Details', true).then(function (d) {
+          var obj = (d.member && d.member[0]) || d;
+          if (obj.title) { titles.push(obj.title); highlight[obj.id || item.objectId] = true; }
+        });
+      });
+    }, Promise.resolve()).then(function () {
+      if (!titles.length) { setStatus('Dropped item(s) have no Title (are they Physical Products?).', true); return; }
+      $('title').value = titles.join(', ');
+      return lookupTitles(titles, highlight);
     }).catch(function (e) { setStatus(e.message, true); });
   }
 
   /* ---- Start ---- */
   function init() {
-    $('lookup').addEventListener('click', function () { droppedId = null; lookupTitle($('title').value); });
-    $('title').addEventListener('keydown', function (e) { if (e.keyCode === 13) { droppedId = null; lookupTitle($('title').value); } });
+    $('lookup').addEventListener('click', lookupFromBox);
+    $('title').addEventListener('keydown', function (e) { if (e.keyCode === 13) { lookupFromBox(); } });
     $('ctx').addEventListener('change', function () { widget.setValue('secCtx', $('ctx').value); });
 
     var drop = $('drop');
@@ -205,3 +266,4 @@ require([
   document.getElementById('raw').textContent = String(err && err.requireModules || err);
 });
 }
+
