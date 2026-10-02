@@ -181,58 +181,62 @@ require([
     dr.addEventListener('click', function (ev) { ev.stopPropagation(); });
   }
 
-  /* One level of child instances for a part the user clicked. Never recursive. */
+  /* One level of child instances for a part the user clicked. Never recursive.
+     Children are grouped by the referenced part id (reliable quantity), then each distinct child
+     is read once (GET) to get its Title, revision and maturity. Cached on the item. */
+  var MAX_CHILD_PARTS = 25;
+  function fetchChildren(it) {
+    if (it._kids) { return Promise.resolve(it._kids); }
+    var base = '/resources/v1/modeler/dseng/dseng:EngItem/' + encodeURIComponent(it.id) + '/dseng:EngInstance';
+    return get(base + '?$mask=dsmveng:EngInstanceMask.Details', true).catch(function () { return get(base, true); })
+    .then(function (d) {
+      var groups = {}, order = [];
+      (d.member || []).forEach(function (m) {
+        var ref = m.referencedObject && m.referencedObject.id;
+        var instBase = String(m.name || '').replace(/<\d+>$/, '');
+        var key = ref || ('name:' + instBase);
+        if (!groups[key]) { groups[key] = { refId: ref || null, instName: instBase, qty: 0 }; order.push(key); }
+        groups[key].qty++;
+      });
+      var kids = order.slice(0, MAX_CHILD_PARTS).map(function (k) { return groups[k]; });
+      kids.truncated = order.length > MAX_CHILD_PARTS;
+      return kids.reduce(function (chain, k) {
+        return chain.then(function () {
+          if (!k.refId) { k.error = 'no reference id'; return; }
+          return get('/resources/v1/modeler/dseng/dseng:EngItem/' + encodeURIComponent(k.refId) +
+                     '?$mask=dsmveng:EngItemMask.Details', true).then(function (r) {
+            var o = (r.member && r.member[0]) || r;
+            k.title = o.title; k.revision = o.revision; k.state = o.state; k.name = o.name;
+            if (!k.title) { k.error = 'no Title on the referenced item'; }
+          }).catch(function () { k.error = 'could not read the child part'; });
+        });
+      }, Promise.resolve()).then(function () { it._kids = kids; return kids; });
+    });
+  }
+
   function loadChildren(it, box) {
     box.textContent = 'Loading children...';
     box.style.cssText = 'max-height:240px;overflow:auto;border:1px solid #ccd;margin-top:6px;padding:4px;background:#fff';
-    var base = '/resources/v1/modeler/dseng/dseng:EngItem/' + encodeURIComponent(it.id) + '/dseng:EngInstance';
-    // Try the Details mask (may expose the child reference); fall back to the plain call if rejected.
-    get(base + '?$mask=dsmveng:EngInstanceMask.Details', true).catch(function () { return get(base, true); })
-    .then(function (d) {
-      var members = d.member || [];
+    fetchChildren(it).then(function (kids) {
       box.textContent = '';
-      if (!members.length) { box.textContent = 'No child instances returned (see Raw response).'; return; }
-
-      // Inferred quantity: count instances sharing a base name once the trailing <n> is stripped.
-      var counts = {}, order = [];
-      members.forEach(function (m) {
-        var b = String(m.name || '').replace(/<\d+>$/, '');
-        if (!(b in counts)) { counts[b] = 0; order.push(b); }
-        counts[b]++;
+      if (!kids.length) { box.textContent = 'No child instances returned (see Raw response).'; return; }
+      var t = document.createElement('table');
+      var h = t.insertRow();
+      ['Title', 'Revision', 'Maturity', 'Qty', '3DX Name'].forEach(function (x) {
+        var th = document.createElement('th'); th.textContent = x; h.appendChild(th);
       });
-      var sum = document.createElement('table');
-      var sh = sum.insertRow();
-      ['Child (instance name without <n>)', 'Instances counted'].forEach(function (h) {
-        var th = document.createElement('th'); th.textContent = h; sh.appendChild(th);
+      kids.forEach(function (k) {
+        var r = t.insertRow();
+        r.insertCell().textContent = k.title || (k.instName + ' (' + (k.error || 'unresolved') + ')');
+        r.insertCell().textContent = k.revision || '';
+        r.insertCell().textContent = prettyState(k.state);
+        r.insertCell().textContent = k.qty;
+        r.insertCell().textContent = k.name || '';
       });
-      order.sort().forEach(function (b) {
-        var r = sum.insertRow();
-        r.insertCell().textContent = b;
-        r.insertCell().textContent = counts[b];
-      });
-      box.appendChild(sum);
-
-      var det = document.createElement('details');
-      var sm = document.createElement('summary');
-      sm.textContent = 'All ' + members.length + ' instances, every field returned';
-      det.appendChild(sm);
-      members.forEach(function (m, i) {
-        var h = document.createElement('div');
-        h.style.cssText = 'margin-top:6px;font-weight:bold';
-        h.textContent = 'Child ' + (i + 1);
-        det.appendChild(h);
-        var t = document.createElement('table');
-        flatten(m, '', []).forEach(function (r) {
-          var row = t.insertRow();
-          var a = row.insertCell(); a.textContent = r[0];
-          row.insertCell().textContent = r[1];
-        });
-        det.appendChild(t);
-      });
-      box.appendChild(det);
+      box.appendChild(t);
+      if (kids.truncated) { box.appendChild(document.createTextNode('Only the first ' + MAX_CHILD_PARTS + ' distinct children are shown.')); }
     }).catch(function (e) { box.textContent = e.message; });
   }
-
   /* ---- Epsilon3 requests, via the dashboard proxy. The ONLY non-GET calls in this widget go
           to Epsilon3, and only from the Confirm button of the Send dialog. 3DX calls stay GET. ---- */
   var E3_BASE = 'https://api.epsilon3.io';
@@ -346,7 +350,9 @@ require([
     close.addEventListener('click', closeDialog);
 
     // The list endpoint rejects a part_number filter (422), so read the list and match locally.
-    listE3Parts().then(function (all) {
+    info.textContent = 'Checking Epsilon3 for an existing part and reading the 3DX children (read-only)...';
+    Promise.all([listE3Parts(), fetchChildren(it).catch(function () { return []; })]).then(function (res) {
+      var all = res[0], kids = res[1];
       var list = all.parts;
       var existing = list.filter(function (p) { return p.part_number === it.title; })[0] || null;
       var partialNote = (!existing && all.incomplete)
@@ -356,7 +362,7 @@ require([
         ? 'This part number already exists in Epsilon3 (id ' + existing.id + ', revision ' + existing.revision +
           '). Only the revision and the 3DX fields will be updated.'
         : 'This part number was not found among ' + list.length + ' Epsilon3 parts. It will be created.' + partialNote;
-      buildSendForm(box, it, d, existing, close);
+      buildSendForm(box, it, d, existing, close, kids, list);
     }).catch(function (e) {
       info.textContent = e.message;
       info.className = 'err';
@@ -364,7 +370,7 @@ require([
     });
   }
 
-  function buildSendForm(box, it, d, existing, closeBtn) {
+  function buildSendForm(box, it, d, existing, closeBtn, kids, e3parts) {
     var isNew = !existing;
     field(box, 'Part number (3DX Title):', input(it.title, true));
     field(box, 'Revision (3DX, sent as is):', input(it.revision, true));
@@ -379,6 +385,43 @@ require([
     maturity.value = mapMaturity(it.state);
     field(box, '3DX Name:', input(it.name, true));
     var link = field(box, '3DX Link:', input(spaceUrl + '/resources/v1/modeler/dseng/dseng:EngItem/' + it.id, false, 1000));
+
+    // Components: one level of 3DX children. A child can be included only if it already exists in
+    // Epsilon3 under the same part number AND the same revision as 3DX (strict revision rule).
+    var compChecks = [];
+    if (kids && kids.length) {
+      var ch = document.createElement('div');
+      ch.style.cssText = 'font-weight:bold;margin-top:6px';
+      ch.textContent = 'Components (3DX children, one level)' +
+        (isNew ? '' : ' - ticking any REPLACES the component list already in Epsilon3');
+      box.appendChild(ch);
+      kids.forEach(function (k) {
+        var row = document.createElement('div');
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        var e3 = k.title ? e3parts.filter(function (p) { return p.part_number === k.title; })[0] : null;
+        var status;
+        if (!k.title) { status = 'cannot include: ' + (k.error || 'unresolved'); }
+        else if (!e3) { status = 'cannot include: not in Epsilon3 yet (send it first)'; }
+        else if (e3.revision !== k.revision) { status = 'cannot include: Epsilon3 has revision ' + e3.revision + ', 3DX has ' + k.revision; }
+        else { status = 'in Epsilon3'; }
+        var ok = k.title && e3 && e3.revision === k.revision;
+        cb.disabled = !ok;
+        cb.checked = !!ok && isNew;
+        row.appendChild(cb);
+        row.appendChild(document.createTextNode(' ' + (k.title || k.instName) + ' rev ' + (k.revision || '?') +
+                                                ' x ' + k.qty + ' - ' + status));
+        box.appendChild(row);
+        compChecks.push({ cb: cb, kid: k });
+        cb.addEventListener('change', function () { refresh(); });
+      });
+      if (kids.truncated) { box.appendChild(document.createTextNode('Only the first ' + MAX_CHILD_PARTS + ' distinct children are listed.')); }
+    }
+    function chosenComponents() {
+      return compChecks.filter(function (c) { return c.cb.checked; }).map(function (c) {
+        return { part_number: c.kid.title, revision: c.kid.revision, quantity: c.kid.qty };
+      });
+    }
 
     var prevLabel = document.createElement('div');
     prevLabel.style.cssText = 'font-weight:bold;margin-top:6px';
@@ -407,6 +450,8 @@ require([
         };
         if (desc.value.trim()) { part.description = desc.value.trim(); }
         if (proj.value.trim()) { part.project_id = proj.value.trim(); }
+        var comps = chosenComponents();
+        if (comps.length) { part.assembly = true; part.components = comps; }
         return [
           { method: 'POST', path: '/v1/builds/parts', body: { parts: [part] } },
           { method: 'PATCH', path: '/v1/builds/parts/<id returned by the step above>', body: { details: details } }
@@ -414,6 +459,8 @@ require([
       }
       var body = { details: details };
       if (existing.revision !== it.revision) { body.revision = it.revision; }
+      var ecomps = chosenComponents();
+      if (ecomps.length) { body.components = ecomps; if (!existing.assembly) { body.assembly = true; } }
       return [{ method: 'PATCH', path: '/v1/builds/parts/' + existing.id, body: body }];
     }
     function valid() {
@@ -625,4 +672,5 @@ require([
   document.getElementById('raw').textContent = String(err && err.requireModules || err);
 });
 }
+
 
