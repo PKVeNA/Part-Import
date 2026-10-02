@@ -49,10 +49,19 @@
   </details>
 </body>
   <script type="text/javascript">
+    var widgetTries = 0;
     function widgetLoading() {
-      if (window.widget) {
-        executeInitWidget(window.widget);
+      var s = document.getElementById('status');
+      if (typeof widget !== 'undefined') {
+        if (s) { s.textContent = 'Widget object found, starting...'; }
+        try {
+          executeInitWidget(widget);
+        } catch (e) {
+          if (s) { s.textContent = 'executeInitWidget failed: ' + e.message; }
+        }
       } else {
+        widgetTries++;
+        if (s) { s.textContent = 'Waiting for widget object (' + widgetTries + ')...'; }
         setTimeout(widgetLoading, 100);
       }
     }
