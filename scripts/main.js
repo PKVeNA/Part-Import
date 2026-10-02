@@ -94,7 +94,14 @@ require([
     var m = /^(\d{2}\/\d{2}\/\d{4})\s+0?(\d{1,2}):(\d{2}):\d{2}\s*([AP]M)$/i.exec(s || '');
     return m ? m[1] + ' ' + m[2] + ':' + m[3] + ' ' + m[4].toUpperCase() : (s || '');
   }
-  var formatters = { state: prettyState, modified: prettyDate, created: prettyDate };
+  function parseDate(s) {
+    // "09/29/2026 03:52:21 PM" or "9/29/2026 3:52:21 PM"; unparseable sorts oldest
+    var m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)$/i.exec(s || '');
+    if (!m) { return 0; }
+    var h = parseInt(m[4], 10) % 12 + (/PM/i.test(m[7]) ? 12 : 0);
+    return new Date(+m[3], +m[1] - 1, +m[2], h, +m[5], +m[6]).getTime();
+  }
+  var formatters ={ state: prettyState, modified: prettyDate, created: prettyDate };
 
   /* ---- Table (one combined table; click a row to load its detail) ---- */
   var MAX_PARTS = 10;
@@ -169,6 +176,7 @@ require([
   /* One level of child instances for a part the user clicked. Never recursive. */
   function loadChildren(it, box) {
     box.textContent = 'Loading children...';
+    box.style.cssText = 'max-height:240px;overflow:auto;border:1px solid #ccd;margin-top:6px;padding:4px;background:#fff';
     var base = '/resources/v1/modeler/dseng/dseng:EngItem/' + encodeURIComponent(it.id) + '/dseng:EngInstance';
     // Try the Details mask (may expose the child reference); fall back to the plain call if rejected.
     get(base + '?$mask=dsmveng:EngInstanceMask.Details', true).catch(function () { return get(base, true); })
@@ -270,14 +278,28 @@ require([
       });
       var msg = all.length + ' revision(s) across ' + (titles.length - missing.length) + ' part(s).';
       if (missing.length) { msg += ' No exact Title match for: ' + missing.join(', ') + '.'; }
-      var keyCount = {};
-      all.forEach(function (a) { var k = a.title + ' ' + a.revision; keyCount[k] = (keyCount[k] || 0) + 1; });
-      var dups = Object.keys(keyCount).filter(function (k) { return keyCount[k] > 1; });
-      if (dups.length) {
-        msg += ' WARNING: more than one 3DX object shares the same Title and revision: ' + dups.join('; ') + '.';
-      }
-      setStatus(msg, !all.length || dups.length > 0);
-      render(all, highlightIds || {});
+      // Title + revision identifies one part revision. Several 3DX objects with the same pair are
+      // edits of that revision, so show only the most recently modified one.
+      var groups = {}, collapsed = [], notes = [];
+      all.forEach(function (a) {
+        var k = a.title + '\u0000' + a.revision;
+        if (!groups[k]) { groups[k] = []; collapsed.push(k); }
+        groups[k].push(a);
+      });
+      var hl = highlightIds || {};
+      var shown = collapsed.map(function (k) {
+        var g = groups[k];
+        g.sort(function (x, y) { return parseDate(y.modified) - parseDate(x.modified); });
+        var latest = g[0];
+        if (g.length > 1) {
+          notes.push(latest.title + ' ' + latest.revision + ': ' + g.length + ' edits, showing most recent');
+          g.forEach(function (e) { if (hl[e.id]) { hl[latest.id] = true; } });
+        }
+        return latest;
+      });
+      if (notes.length) { msg += ' ' + notes.join('; ') + '.'; }
+      setStatus(msg, !all.length);
+      render(shown, hl);
     }).catch(function (e) { setStatus(e.message, true); });
   }
 
