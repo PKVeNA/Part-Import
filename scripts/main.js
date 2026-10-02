@@ -282,7 +282,21 @@ require([
   function init() {
     $('lookup').addEventListener('click', lookupFromBox);
     $('title').addEventListener('keydown', function (e) { if (e.keyCode === 13) { lookupFromBox(); } });
-    widget.addPreference({ name: 'e3Key', type: 'password', label: 'Epsilon3 API key', defaultValue: '' });
+    if ($('e3save')) {
+      var keyState = function () {
+        $('e3keystate').textContent = widget.getValue('e3Key') ? 'API key is saved.' : 'No API key saved.';
+      };
+      keyState();
+      $('e3save').addEventListener('click', function () {
+        widget.setValue('e3Key', $('e3key').value.trim());
+        $('e3key').value = '';
+        keyState();
+      });
+      $('e3clear').addEventListener('click', function () {
+        widget.setValue('e3Key', '');
+        keyState();
+      });
+    }
     if ($('e3go') && $('e3path')) {
       $('e3go').addEventListener('click', function () {
         setStatus('Epsilon3 GET ' + $('e3path').value + '...');

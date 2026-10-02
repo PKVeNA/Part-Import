@@ -12,7 +12,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <widget:preferences>
   </widget:preferences>
-  <script src="./scripts/main.js?v=3"></script>
+  <script src="./scripts/main.js?v=4"></script>
   <style type="text/css">
     body { font-family: Arial, Helvetica, sans-serif; font-size: 13px; margin: 0; padding: 8px; color: #333; }
     .row { margin-bottom: 8px; }
@@ -52,10 +52,17 @@
   <details>
     <summary>Epsilon3 probe (read-only GET)</summary>
     <div class="row" style="margin-top:6px">
+      <label for="e3key">API key:</label>
+      <input type="password" id="e3key" autocomplete="off" style="width:200px" />
+      <button id="e3save" type="button">Save</button>
+      <button id="e3clear" type="button">Clear</button>
+      <span id="e3keystate"></span>
+    </div>
+    <div class="row">
       <input type="text" id="e3path" value="/v1/fields" style="width:260px" />
       <button id="e3go" type="button">GET</button>
     </div>
-    <div>Set the API key in this widget's preferences. The response appears in Raw response below.</div>
+    <div>The response appears in Raw response below.</div>
   </details>
   <details>
     <summary>Raw response</summary>
