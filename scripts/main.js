@@ -173,5 +173,18 @@ require([
     });
   }
 
-  widget.addEvent('onLoad', init);
+  var started = false;
+  function start() {
+    if (started) { return; }
+    started = true;
+    try { init(); } catch (e) { setStatus('Startup error: ' + e.message, true); showRaw('Startup error', String(e.stack || e)); }
+  }
+  // The require callback is async, so onLoad may already have fired; start now and on onLoad.
+  start();
+  widget.addEvent('onLoad', start);
+}, function (err) {
+  var s = document.getElementById('status');
+  s.className = 'err';
+  s.textContent = 'Module load failed: ' + (err && err.message || err);
+  document.getElementById('raw').textContent = String(err && err.requireModules || err);
 });
