@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:widget="http://www.netvibes.com/ns/">
+<head>
+  <title>Part History</title>
+  <meta name="author" content="Venturi Space" />
+  <meta name="description" content="Revision and maturity history of one part (read-only)." />
+  <widget:preferences>
+    <widget:preference name="secCtx" type="hidden" defaultValue="" />
+  </widget:preferences>
+  <style type="text/css">
+    body { font-family: Arial, Helvetica, sans-serif; font-size: 13px; margin: 0; padding: 8px; color: #333; }
+    .row { margin-bottom: 8px; }
+    label { font-weight: bold; margin-right: 4px; }
+    input[type=text] { padding: 4px; width: 180px; }
+    select { padding: 4px; max-width: 100%; }
+    button { padding: 4px 10px; cursor: pointer; }
+    #drop { border: 2px dashed #8aa; border-radius: 4px; padding: 14px; text-align: center; color: #678; background: #f6fafb; }
+    #drop.over { background: #dff0f5; border-color: #258; }
+    #status { margin: 8px 0; min-height: 1.3em; }
+    #status.err { color: #b00020; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ccd; padding: 4px 6px; text-align: left; }
+    th { background: #eef2f6; }
+    tr.dropped td { background: #fff6c8; font-weight: bold; }
+    details { margin-top: 10px; }
+    pre { background: #f4f4f4; padding: 6px; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <div class="row">
+    <label for="ctx">Security context:</label>
+    <select id="ctx"><option value="">(loading...)</option></select>
+  </div>
+  <div id="drop">Drop a part here</div>
+  <div class="row" style="margin-top:8px">
+    <label for="title">Part Title:</label>
+    <input type="text" id="title" placeholder="e.g. V101-2006" />
+    <button id="lookup" type="button">Look up</button>
+  </div>
+  <div id="status"></div>
+  <div id="results"></div>
+  <details>
+    <summary>Raw response</summary>
+    <pre id="raw">(nothing yet)</pre>
+  </details>
+  <script type="text/javascript" src="scripts/main.js"></script>
+</body>
+</html>
