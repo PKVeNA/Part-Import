@@ -152,7 +152,63 @@ require([
         row.insertCell().textContent = r[1];
       });
       cell.appendChild(t);
+      var kidsBtn = document.createElement('button');
+      kidsBtn.textContent = 'Show child instances (1 level)';
+      kidsBtn.style.marginTop = '6px';
+      var kidsBox = document.createElement('div');
+      kidsBtn.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        loadChildren(it, kidsBox);
+      });
+      cell.appendChild(kidsBtn);
+      cell.appendChild(kidsBox);
     }).catch(function (e) { cell.textContent = e.message; });
+    dr.addEventListener('click', function (ev) { ev.stopPropagation(); });
+  }
+
+  /* One level of child instances for a part the user clicked. Never recursive. */
+  function loadChildren(it, box) {
+    box.textContent = 'Loading children...';
+    get('/resources/v1/modeler/dseng/dseng:EngItem/' + encodeURIComponent(it.id) +
+        '/dseng:EngInstance', true).then(function (d) {
+      var members = d.member || [];
+      box.textContent = '';
+      if (!members.length) { box.textContent = 'No child instances returned (see Raw response).'; return; }
+      members.forEach(function (m, i) {
+        var h = document.createElement('div');
+        h.style.cssText = 'margin-top:6px;font-weight:bold';
+        h.textContent = 'Child ' + (i + 1);
+        box.appendChild(h);
+        var t = document.createElement('table');
+        flatten(m, '', []).forEach(function (r) {
+          var row = t.insertRow();
+          var a = row.insertCell(); a.textContent = r[0];
+          row.insertCell().textContent = r[1];
+        });
+        box.appendChild(t);
+      });
+    }).catch(function (e) { box.textContent = e.message; });
+  }
+
+  /* ---- Epsilon3 read-only probe. GET only, via the dashboard proxy, nothing is sent from 3DX data. ---- */
+  var E3_BASE = 'https://api.epsilon3.io';
+  function e3Get(path) {
+    return new Promise(function (resolve, reject) {
+      var key = widget.getValue('e3Key');
+      if (!key) { reject(new Error('Set the Epsilon3 API key in the widget preferences first.')); return; }
+      if (path.indexOf('/v1/') !== 0) { reject(new Error('Path must start with /v1/')); return; }
+      WAFData.proxifiedRequest(E3_BASE + path, {
+        method: 'GET',
+        headers: { Accept: 'application/json', Authorization: 'Basic ' + btoa(key + ':') },
+        type: 'json',
+        onComplete: function (data) { showRaw('Epsilon3 GET ' + path, data); resolve(data); },
+        onFailure: function (err, resp) {
+          showRaw('Epsilon3 GET ' + path + ' FAILED', { error: String(err && err.message || err), response: resp });
+          reject(new Error('Epsilon3 request failed: ' + (err && err.message || err)));
+        },
+        onTimeout: function () { reject(new Error('Epsilon3 request timed out')); }
+      });
+    });
   }
 
   /* ---- Lookup by exact Title(s), one search per Title, only for what the user entered ---- */
@@ -226,6 +282,12 @@ require([
   function init() {
     $('lookup').addEventListener('click', lookupFromBox);
     $('title').addEventListener('keydown', function (e) { if (e.keyCode === 13) { lookupFromBox(); } });
+    widget.addPreference({ name: 'e3Key', type: 'password', label: 'Epsilon3 API key', defaultValue: '' });
+    $('e3go').addEventListener('click', function () {
+      setStatus('Epsilon3 GET ' + $('e3path').value + '...');
+      e3Get($('e3path').value.trim()).then(function () { setStatus('Epsilon3 response shown in Raw response.'); })
+        .catch(function (e) { setStatus(e.message, true); });
+    });
     $('ctx').addEventListener('change', function () { widget.setValue('secCtx', $('ctx').value); });
 
     var drop = $('drop');
