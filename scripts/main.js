@@ -85,6 +85,18 @@ require([
     return x.iter - y.iter;
   }
 
+  /* ---- Display formatting (display only; underlying values are untouched) ---- */
+  function prettyState(s) {
+    if (!s) { return ''; }
+    return String(s).replace(/_/g, ' ').toLowerCase().replace(/(^|\s)\S/g, function (c) { return c.toUpperCase(); });
+  }
+  function prettyDate(s) {
+    // "09/29/2026 03:52:21 PM" -> "09/29/2026 3:52 PM"
+    var m = /^(\d{2}\/\d{2}\/\d{4})\s+0?(\d{1,2}):(\d{2}):\d{2}\s*([AP]M)$/i.exec(s || '');
+    return m ? m[1] + ' ' + m[2] + ':' + m[3] + ' ' + m[4].toUpperCase() : (s || '');
+  }
+  var formatters = { state: prettyState, modified: prettyDate, created: prettyDate };
+
   /* ---- Table ---- */
   function render(items, highlightId) {
     var box = $('results');
@@ -102,7 +114,8 @@ require([
       if (highlightId && (it.id === highlightId)) { tr.className = 'dropped'; }
       cols.forEach(function (c) {
         var td = tr.insertCell();
-        td.textContent = it[c[1]] == null ? '' : it[c[1]];
+        var v = it[c[1]] == null ? '' : it[c[1]];
+        td.textContent = formatters[c[1]] ? formatters[c[1]](v) : v;
       });
     });
     box.appendChild(table);
