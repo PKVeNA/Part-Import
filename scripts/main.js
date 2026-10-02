@@ -105,7 +105,7 @@ require([
 
   /* ---- Table (one combined table; click a row to load its detail) ---- */
   var MAX_PARTS = 10;
-  var cols = [['Title', 'title'], ['Revision', 'revision'], ['Maturity', 'state'], ['Modified', 'modified'],
+  var cols = [['Title', 'title'], ['Revision', 'revisionMajor'], ['Maturity', 'state'], ['Modified', 'modified'],
               ['Created', 'created'], ['Owner', 'owner'], ['3DX Name', 'name']];
 
   function render(items, highlightIds) {
@@ -251,7 +251,11 @@ require([
     var path = '/resources/v1/modeler/dseng/dseng:EngItem/search?$searchStr=' +
                encodeURIComponent(title) + '&$top=50';
     return get(path, true).then(function (data) {
-      return (data.member || []).filter(function (m) { return m.title === title; });
+      return (data.member || []).filter(function (m) { return m.title === title; }).map(function (m) {
+        // Epsilon3 revision = major part of the 3DX revision ("A.1" -> "A"). Full value stays in m.revision.
+        m.revisionMajor = String(m.revision || '').split('.')[0];
+        return m;
+      });
     });
   }
 
@@ -282,7 +286,7 @@ require([
       // edits of that revision, so show only the most recently modified one.
       var groups = {}, collapsed = [], notes = [];
       all.forEach(function (a) {
-        var k = a.title + '\u0000' + a.revision;
+        var k = a.title + '\u0000' + a.revisionMajor;
         if (!groups[k]) { groups[k] = []; collapsed.push(k); }
         groups[k].push(a);
       });
@@ -292,7 +296,7 @@ require([
         g.sort(function (x, y) { return parseDate(y.modified) - parseDate(x.modified); });
         var latest = g[0];
         if (g.length > 1) {
-          notes.push(latest.title + ' ' + latest.revision + ': ' + g.length + ' edits, showing most recent');
+          notes.push(latest.title + ' ' + latest.revisionMajor + ': ' + g.length + ' edits/iterations, showing most recent');
           g.forEach(function (e) { if (hl[e.id]) { hl[latest.id] = true; } });
         }
         return latest;
