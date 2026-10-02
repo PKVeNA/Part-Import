@@ -239,6 +239,13 @@ require([
   var E3_PART_FORM_ID = '6c720982-92e6-411f-8ed7-9b0d6b1d8da3';       // "Part" form
   var E3_FIELD_3DX_NAME = '44b286d7-b36d-43eb-aa0f-0a812cb14957';      // custom Text field "3DX Name"
   var E3_FIELD_3DX_LINK = 'e9dd7977-28da-44bf-a819-5305716d3575';      // custom Text field "3DX Link"
+  var E3_FIELD_MATURITY = '7c93a4ad-dfca-4f2b-b781-656f39d545df';      // custom List field "Maturity State"
+  var E3_MATURITY_OPTIONS = ['Draft', 'In Work', 'Released', 'Frozen', 'Obsolete'];
+  // Only 3DX states seen or standard are mapped; anything else is left for the operator to choose.
+  var MATURITY_MAP = { IN_WORK: 'In Work', RELEASED: 'Released', FROZEN: 'Frozen', OBSOLETE: 'Obsolete', DRAFT: 'Draft' };
+  function mapMaturity(state) {
+    return MATURITY_MAP[String(state || '').toUpperCase().replace(/[\s-]+/g, '_')] || '';
+  }
 
   function e3Request(method, path, body) {
     return new Promise(function (resolve, reject) {
@@ -347,6 +354,9 @@ require([
     var proc = field(box, 'Procurement type:', select([['', '-- choose --'], ['buy', 'buy'], ['make', 'make'], ['make or buy', 'make or buy']]));
     var proj = field(box, 'Project id (optional):', input('', !isNew));
     if (!isNew) { tracking.disabled = true; proc.disabled = true; }
+    var maturity = field(box, 'Maturity State (from 3DX "' + (it.state || '') + '"):',
+      select([['', '-- choose --']].concat(E3_MATURITY_OPTIONS.map(function (o) { return [o, o]; }))));
+    maturity.value = mapMaturity(it.state);
     field(box, '3DX Name:', input(it.name, true));
     var link = field(box, '3DX Link:', input(spaceUrl + '/resources/v1/modeler/dseng/dseng:EngItem/' + it.id, false, 1000));
 
@@ -367,7 +377,8 @@ require([
     function plan() {
       var details = [
         { id: E3_FIELD_3DX_NAME, value: { recorded: it.name } },
-        { id: E3_FIELD_3DX_LINK, value: { recorded: link.value.trim() } }
+        { id: E3_FIELD_3DX_LINK, value: { recorded: link.value.trim() } },
+        { id: E3_FIELD_MATURITY, value: { recorded: maturity.value } }
       ];
       if (isNew) {
         var part = {
@@ -386,7 +397,7 @@ require([
       return [{ method: 'PATCH', path: '/v1/builds/parts/' + existing.id, body: body }];
     }
     function valid() {
-      if (!link.value.trim()) { return false; }
+      if (!link.value.trim() || !maturity.value) { return false; }
       return !isNew || (name.value.trim() && tracking.value && proc.value);
     }
     function refresh() {
@@ -394,9 +405,9 @@ require([
         return s.method + ' ' + E3_BASE + s.path + '\n' + JSON.stringify(s.body, null, 2);
       }).join('\n\n');
       confirm.disabled = !valid();
-      msg.textContent = valid() ? '' : 'Fill in name, tracking, procurement type and the link to enable sending.';
+      msg.textContent = valid() ? '' : 'Fill in name, tracking, procurement type, maturity and the link to enable sending.';
     }
-    [name, desc, tracking, proc, proj, link].forEach(function (el) {
+    [name, desc, tracking, proc, proj, link, maturity].forEach(function (el) {
       el.addEventListener('input', refresh);
       el.addEventListener('change', refresh);
     });
