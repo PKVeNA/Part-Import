@@ -309,6 +309,22 @@ require([
     return el;
   }
 
+  // Read every Epsilon3 part (read-only), following pagination.next_page_token if present.
+  function listE3Parts() {
+    var parts = [], pages = 0;
+    function page(token) {
+      return e3Get('/v1/builds/parts' + (token ? '?page_token=' + encodeURIComponent(token) : '')).then(function (res) {
+        parts = parts.concat(res.parts || res.data || []);
+        var next = res.pagination && res.pagination.next_page_token;
+        if (next && ++pages < 20) {
+          return page(next).catch(function (e) { return { parts: parts, incomplete: e.message }; });
+        }
+        return { parts: parts, incomplete: next ? 'more than 20 pages' : '' };
+      });
+    }
+    return page(null).then(function (r) { return r.parts ? r : { parts: parts, incomplete: '' }; });
+  }
+
   function openSendDialog(it, d) {
     closeDialog();
     var ov = document.createElement('div');
@@ -330,13 +346,11 @@ require([
     close.addEventListener('click', closeDialog);
 
     // The list endpoint rejects a part_number filter (422), so read the list and match locally.
-    e3Get('/v1/builds/parts').then(function (res) {
-      var list = res.parts || res.data || [];
+    listE3Parts().then(function (all) {
+      var list = all.parts;
       var existing = list.filter(function (p) { return p.part_number === it.title; })[0] || null;
-      // Any top-level key besides the list itself may be paging info; if present, the list may be partial.
-      var extra = Object.keys(res).filter(function (k) { return k !== 'parts' && k !== 'data'; });
-      var partialNote = (!existing && extra.length)
-        ? ' Note: Epsilon3 also returned ' + extra.join(', ') + ', so the list may be incomplete and the part might already exist.'
+      var partialNote = (!existing && all.incomplete)
+        ? ' Note: the Epsilon3 list could not be read completely (' + all.incomplete + '), so the part might already exist.'
         : '';
       info.textContent = existing
         ? 'This part number already exists in Epsilon3 (id ' + existing.id + ', revision ' + existing.revision +
