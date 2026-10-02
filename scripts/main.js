@@ -1,4 +1,7 @@
 /* Part History widget, version 1. READ-ONLY: every 3DSpace call below is a GET. */
+/* index.html calls executeInitWidget once the dashboard's `widget` object exists;
+   `require` is not available before that. */
+function executeInitWidget(w) {
 require([
   'DS/WAFData/WAFData',
   'DS/i3DXCompassServices/i3DXCompassServices',
@@ -188,3 +191,4 @@ require([
   s.textContent = 'Module load failed: ' + (err && err.message || err);
   document.getElementById('raw').textContent = String(err && err.requireModules || err);
 });
+}

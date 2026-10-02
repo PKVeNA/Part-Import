@@ -5,9 +5,12 @@
   <title>Part History</title>
   <meta name="author" content="Venturi Space" />
   <meta name="description" content="Revision and maturity history of one part (read-only)." />
+  <meta name="apiVersion" content="1.0" />
+  <meta name="debugMode" content="true" />
+  <meta name="strictMode" content="false" />
   <widget:preferences>
-    <widget:preference name="secCtx" type="hidden" defaultValue="" />
   </widget:preferences>
+  <script type="text/javascript" src="./scripts/main.js"></script>
   <style type="text/css">
     body { font-family: Arial, Helvetica, sans-serif; font-size: 13px; margin: 0; padding: 8px; color: #333; }
     .row { margin-bottom: 8px; }
@@ -44,6 +47,15 @@
     <summary>Raw response</summary>
     <pre id="raw">(nothing yet)</pre>
   </details>
-  <script type="text/javascript" src="scripts/main.js"></script>
 </body>
+  <script type="text/javascript">
+    function widgetLoading() {
+      if (typeof widget !== 'undefined' && widget) {
+        executeInitWidget(widget);
+      } else {
+        setTimeout(widgetLoading, 100);
+      }
+    }
+    widgetLoading();
+  </script>
 </html>
