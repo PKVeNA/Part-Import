@@ -329,13 +329,19 @@ require([
     close.textContent = 'Cancel';
     close.addEventListener('click', closeDialog);
 
-    e3Get('/v1/builds/parts?part_number=' + encodeURIComponent(it.title)).then(function (res) {
+    // The list endpoint rejects a part_number filter (422), so read the list and match locally.
+    e3Get('/v1/builds/parts').then(function (res) {
       var list = res.parts || res.data || [];
       var existing = list.filter(function (p) { return p.part_number === it.title; })[0] || null;
+      // Any top-level key besides the list itself may be paging info; if present, the list may be partial.
+      var extra = Object.keys(res).filter(function (k) { return k !== 'parts' && k !== 'data'; });
+      var partialNote = (!existing && extra.length)
+        ? ' Note: Epsilon3 also returned ' + extra.join(', ') + ', so the list may be incomplete and the part might already exist.'
+        : '';
       info.textContent = existing
         ? 'This part number already exists in Epsilon3 (id ' + existing.id + ', revision ' + existing.revision +
           '). Only the revision and the 3DX fields will be updated.'
-        : 'This part number does not exist in Epsilon3 yet. It will be created.';
+        : 'This part number was not found among ' + list.length + ' Epsilon3 parts. It will be created.' + partialNote;
       buildSendForm(box, it, d, existing, close);
     }).catch(function (e) {
       info.textContent = e.message;
