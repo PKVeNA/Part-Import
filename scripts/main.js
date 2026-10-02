@@ -105,7 +105,7 @@ require([
 
   /* ---- Table (one combined table; click a row to load its detail) ---- */
   var MAX_PARTS = 10;
-  var cols = [['Title', 'title'], ['Revision', 'revisionMajor'], ['Maturity', 'state'], ['Modified', 'modified'],
+  var cols = [['Title', 'title'], ['Revision', 'revision'], ['Maturity', 'state'], ['Modified', 'modified'],
               ['Created', 'created'], ['Owner', 'owner'], ['3DX Name', 'name']];
 
   function render(items, highlightIds) {
@@ -167,7 +167,15 @@ require([
         ev.stopPropagation();
         loadChildren(it, kidsBox);
       });
+      var sendBtn = document.createElement('button');
+      sendBtn.textContent = 'Send to Epsilon3...';
+      sendBtn.style.cssText = 'margin-top:6px;margin-left:8px';
+      sendBtn.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        openSendDialog(it, obj);
+      });
       cell.appendChild(kidsBtn);
+      cell.appendChild(sendBtn);
       cell.appendChild(kidsBox);
     }).catch(function (e) { cell.textContent = e.message; });
     dr.addEventListener('click', function (ev) { ev.stopPropagation(); });
@@ -225,23 +233,197 @@ require([
     }).catch(function (e) { box.textContent = e.message; });
   }
 
-  /* ---- Epsilon3 read-only probe. GET only, via the dashboard proxy, nothing is sent from 3DX data. ---- */
+  /* ---- Epsilon3 requests, via the dashboard proxy. The ONLY non-GET calls in this widget go
+          to Epsilon3, and only from the Confirm button of the Send dialog. 3DX calls stay GET. ---- */
   var E3_BASE = 'https://api.epsilon3.io';
-  function e3Get(path) {
+  var E3_PART_FORM_ID = '6c720982-92e6-411f-8ed7-9b0d6b1d8da3';       // "Part" form
+  var E3_FIELD_3DX_NAME = '44b286d7-b36d-43eb-aa0f-0a812cb14957';      // custom Text field "3DX Name"
+  var E3_FIELD_3DX_LINK = 'e9dd7977-28da-44bf-a819-5305716d3575';      // custom Text field "3DX Link"
+
+  function e3Request(method, path, body) {
     return new Promise(function (resolve, reject) {
       var key = widget.getValue('e3Key');
-      if (!key) { reject(new Error('Set the Epsilon3 API key in the widget preferences first.')); return; }
+      var label = 'Epsilon3 ' + method + ' ' + path;
+      if (!key) { reject(new Error('Save the Epsilon3 API key first (Epsilon3 section).')); return; }
       if (path.indexOf('/v1/') !== 0) { reject(new Error('Path must start with /v1/')); return; }
-      WAFData.proxifiedRequest(E3_BASE + path, {
-        method: 'GET',
+      var opts = {
+        method: method,
         headers: { Accept: 'application/json', Authorization: 'Basic ' + btoa(key + ':') },
         type: 'json',
-        onComplete: function (data) { showRaw('Epsilon3 GET ' + path, data); resolve(data); },
+        onComplete: function (data) { showRaw(label, data); resolve(data); },
         onFailure: function (err, resp) {
-          showRaw('Epsilon3 GET ' + path + ' FAILED', { error: String(err && err.message || err), response: resp });
-          reject(new Error('Epsilon3 request failed: ' + (err && err.message || err)));
+          showRaw(label + ' FAILED', { error: String(err && err.message || err), response: resp });
+          reject(new Error('Epsilon3 request failed: ' + (err && err.message || err) +
+                           (resp ? ' ' + (typeof resp === 'string' ? resp : JSON.stringify(resp)) : '')));
         },
         onTimeout: function () { reject(new Error('Epsilon3 request timed out')); }
+      };
+      if (body !== undefined) {
+        opts.headers['Content-Type'] = 'application/json';
+        opts.data = JSON.stringify(body);
+      }
+      WAFData.proxifiedRequest(E3_BASE + path, opts);
+    });
+  }
+  function e3Get(path) { return e3Request('GET', path); }
+
+  /* ---- Send to Epsilon3: explicit click, read-only existence check, then a confirmation dialog
+          showing the exact requests. Nothing is written until Confirm is clicked. ---- */
+  function closeDialog() {
+    var old = $('e3dlg');
+    if (old) { old.parentNode.removeChild(old); }
+  }
+
+  function field(box, label, el) {
+    var row = document.createElement('div');
+    row.className = 'row';
+    var l = document.createElement('label');
+    l.textContent = label + ' ';
+    row.appendChild(l);
+    row.appendChild(el);
+    box.appendChild(row);
+    return el;
+  }
+  function input(value, readOnly, maxLen) {
+    var el = document.createElement('input');
+    el.type = 'text';
+    el.value = value || '';
+    el.style.width = '95%';
+    if (readOnly) { el.readOnly = true; el.style.background = '#eee'; }
+    if (maxLen) { el.maxLength = maxLen; }
+    return el;
+  }
+  function select(options) {
+    var el = document.createElement('select');
+    options.forEach(function (o) {
+      var op = document.createElement('option');
+      op.value = o[0]; op.textContent = o[1]; el.appendChild(op);
+    });
+    return el;
+  }
+
+  function openSendDialog(it, d) {
+    closeDialog();
+    var ov = document.createElement('div');
+    ov.id = 'e3dlg';
+    ov.style.cssText = 'position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.45);overflow:auto;z-index:1000';
+    var box = document.createElement('div');
+    box.style.cssText = 'background:#fff;margin:10px auto;padding:10px;border-radius:4px;max-width:640px';
+    ov.appendChild(box);
+    document.body.appendChild(ov);
+    var title = document.createElement('div');
+    title.style.fontWeight = 'bold';
+    title.textContent = 'Send to Epsilon3: ' + it.title + ' rev ' + it.revision;
+    box.appendChild(title);
+    var info = document.createElement('div');
+    info.textContent = 'Checking Epsilon3 for an existing part (read-only)...';
+    box.appendChild(info);
+    var close = document.createElement('button');
+    close.textContent = 'Cancel';
+    close.addEventListener('click', closeDialog);
+
+    e3Get('/v1/builds/parts?part_number=' + encodeURIComponent(it.title)).then(function (res) {
+      var list = res.parts || res.data || [];
+      var existing = list.filter(function (p) { return p.part_number === it.title; })[0] || null;
+      info.textContent = existing
+        ? 'This part number already exists in Epsilon3 (id ' + existing.id + ', revision ' + existing.revision +
+          '). Only the revision and the 3DX fields will be updated.'
+        : 'This part number does not exist in Epsilon3 yet. It will be created.';
+      buildSendForm(box, it, d, existing, close);
+    }).catch(function (e) {
+      info.textContent = e.message;
+      info.className = 'err';
+      box.appendChild(close);
+    });
+  }
+
+  function buildSendForm(box, it, d, existing, closeBtn) {
+    var isNew = !existing;
+    field(box, 'Part number (3DX Title):', input(it.title, true));
+    field(box, 'Revision (3DX, sent as is):', input(it.revision, true));
+    var name = field(box, 'Name:', input(d.title || it.title, !isNew, 128));
+    var desc = field(box, 'Description:', input(d.description || '', !isNew, 512));
+    var tracking = field(box, 'Tracking:', select([['', '-- choose --'], ['serial', 'serial'], ['lot', 'lot'], ['none', 'none']]));
+    var proc = field(box, 'Procurement type:', select([['', '-- choose --'], ['buy', 'buy'], ['make', 'make'], ['make or buy', 'make or buy']]));
+    var proj = field(box, 'Project id (optional):', input('', !isNew));
+    if (!isNew) { tracking.disabled = true; proc.disabled = true; }
+    field(box, '3DX Name:', input(it.name, true));
+    var link = field(box, '3DX Link:', input(spaceUrl + '/resources/v1/modeler/dseng/dseng:EngItem/' + it.id, false, 1000));
+
+    var prevLabel = document.createElement('div');
+    prevLabel.style.cssText = 'font-weight:bold;margin-top:6px';
+    prevLabel.textContent = 'Exactly what will be sent to Epsilon3:';
+    var preview = document.createElement('pre');
+    var msg = document.createElement('div');
+    var confirm = document.createElement('button');
+    confirm.textContent = 'Confirm and send';
+    confirm.style.marginRight = '8px';
+    box.appendChild(prevLabel);
+    box.appendChild(preview);
+    box.appendChild(confirm);
+    box.appendChild(closeBtn);
+    box.appendChild(msg);
+
+    function plan() {
+      var details = [
+        { id: E3_FIELD_3DX_NAME, value: { recorded: it.name } },
+        { id: E3_FIELD_3DX_LINK, value: { recorded: link.value.trim() } }
+      ];
+      if (isNew) {
+        var part = {
+          part_number: it.title, name: name.value.trim(), revision: it.revision,
+          tracking: tracking.value, procurement_type: proc.value, form_id: E3_PART_FORM_ID
+        };
+        if (desc.value.trim()) { part.description = desc.value.trim(); }
+        if (proj.value.trim()) { part.project_id = proj.value.trim(); }
+        return [
+          { method: 'POST', path: '/v1/builds/parts', body: { parts: [part] } },
+          { method: 'PATCH', path: '/v1/builds/parts/<id returned by the step above>', body: { details: details } }
+        ];
+      }
+      var body = { details: details };
+      if (existing.revision !== it.revision) { body.revision = it.revision; }
+      return [{ method: 'PATCH', path: '/v1/builds/parts/' + existing.id, body: body }];
+    }
+    function valid() {
+      if (!link.value.trim()) { return false; }
+      return !isNew || (name.value.trim() && tracking.value && proc.value);
+    }
+    function refresh() {
+      preview.textContent = plan().map(function (s) {
+        return s.method + ' ' + E3_BASE + s.path + '\n' + JSON.stringify(s.body, null, 2);
+      }).join('\n\n');
+      confirm.disabled = !valid();
+      msg.textContent = valid() ? '' : 'Fill in name, tracking, procurement type and the link to enable sending.';
+    }
+    [name, desc, tracking, proc, proj, link].forEach(function (el) {
+      el.addEventListener('input', refresh);
+      el.addEventListener('change', refresh);
+    });
+    refresh();
+
+    confirm.addEventListener('click', function () {
+      confirm.disabled = true;
+      var steps = plan(), newId = null;
+      msg.className = '';
+      msg.textContent = 'Sending...';
+      steps.reduce(function (chain, s) {
+        return chain.then(function () {
+          var path = s.path.replace('<id returned by the step above>', newId || '');
+          return e3Request(s.method, path, s.body).then(function (res) {
+            if (s.method === 'POST') {
+              var p = (res.parts && res.parts[0]) || res;
+              newId = p.id;
+              if (!newId) { throw new Error('Epsilon3 did not return a part id (see Raw response).'); }
+            }
+          });
+        });
+      }, Promise.resolve()).then(function () {
+        msg.textContent = 'Done. The part was written to Epsilon3. The last response is in Raw response.';
+        setStatus('Sent ' + it.title + ' rev ' + it.revision + ' to Epsilon3.');
+      }).catch(function (e) {
+        msg.className = 'err';
+        msg.textContent = e.message + ' (Check Epsilon3: an earlier step may already have been applied.)';
       });
     });
   }
@@ -251,11 +433,7 @@ require([
     var path = '/resources/v1/modeler/dseng/dseng:EngItem/search?$searchStr=' +
                encodeURIComponent(title) + '&$top=50';
     return get(path, true).then(function (data) {
-      return (data.member || []).filter(function (m) { return m.title === title; }).map(function (m) {
-        // Epsilon3 revision = major part of the 3DX revision ("A.1" -> "A"). Full value stays in m.revision.
-        m.revisionMajor = String(m.revision || '').split('.')[0];
-        return m;
-      });
+      return (data.member || []).filter(function (m) { return m.title === title; });
     });
   }
 
@@ -286,7 +464,7 @@ require([
       // edits of that revision, so show only the most recently modified one.
       var groups = {}, collapsed = [], notes = [];
       all.forEach(function (a) {
-        var k = a.title + '\u0000' + a.revisionMajor;
+        var k = a.title + '\u0000' + a.revision;
         if (!groups[k]) { groups[k] = []; collapsed.push(k); }
         groups[k].push(a);
       });
@@ -296,7 +474,7 @@ require([
         g.sort(function (x, y) { return parseDate(y.modified) - parseDate(x.modified); });
         var latest = g[0];
         if (g.length > 1) {
-          notes.push(latest.title + ' ' + latest.revisionMajor + ': ' + g.length + ' edits/iterations, showing most recent');
+          notes.push(latest.title + ' ' + latest.revision + ': ' + g.length + ' edits, showing most recent');
           g.forEach(function (e) { if (hl[e.id]) { hl[latest.id] = true; } });
         }
         return latest;
