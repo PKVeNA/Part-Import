@@ -282,6 +282,19 @@ require([
   function init() {
     $('lookup').addEventListener('click', lookupFromBox);
     $('title').addEventListener('keydown', function (e) { if (e.keyCode === 13) { lookupFromBox(); } });
+    // Built here (not in index.html) so a cached copy of the page can't hide it.
+    var probe = document.createElement('details');
+    probe.innerHTML = '<summary>Epsilon3 probe (read-only GET)</summary>' +
+      '<div class="row" style="margin-top:6px"><label for="e3key">API key:</label> ' +
+      '<input type="password" id="e3key" autocomplete="off" style="width:200px" /> ' +
+      '<button id="e3save" type="button">Save</button> <button id="e3clear" type="button">Clear</button> ' +
+      '<span id="e3keystate"></span></div>' +
+      '<div class="row"><input type="text" id="e3path" value="/v1/fields" style="width:260px" /> ' +
+      '<button id="e3go" type="button">GET</button></div>' +
+      '<div>The response appears in Raw response below.</div>';
+    var rawDetails = $('raw').parentNode;
+    rawDetails.parentNode.insertBefore(probe, rawDetails);
+
     if ($('e3save')) {
       var keyState = function () {
         $('e3keystate').textContent = widget.getValue('e3Key') ? 'API key is saved.' : 'No API key saved.';
