@@ -283,11 +283,13 @@ require([
     $('lookup').addEventListener('click', lookupFromBox);
     $('title').addEventListener('keydown', function (e) { if (e.keyCode === 13) { lookupFromBox(); } });
     widget.addPreference({ name: 'e3Key', type: 'password', label: 'Epsilon3 API key', defaultValue: '' });
-    $('e3go').addEventListener('click', function () {
-      setStatus('Epsilon3 GET ' + $('e3path').value + '...');
-      e3Get($('e3path').value.trim()).then(function () { setStatus('Epsilon3 response shown in Raw response.'); })
-        .catch(function (e) { setStatus(e.message, true); });
-    });
+    if ($('e3go') && $('e3path')) {
+      $('e3go').addEventListener('click', function () {
+        setStatus('Epsilon3 GET ' + $('e3path').value + '...');
+        e3Get($('e3path').value.trim()).then(function () { setStatus('Epsilon3 response shown in Raw response.'); })
+          .catch(function (e) { setStatus(e.message, true); });
+      });
+    }
     $('ctx').addEventListener('change', function () { widget.setValue('secCtx', $('ctx').value); });
 
     var drop = $('drop');
