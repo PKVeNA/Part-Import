@@ -50,8 +50,8 @@
 </body>
   <script type="text/javascript">
     function widgetLoading() {
-      if (typeof widget !== 'undefined' && widget) {
-        executeInitWidget(widget);
+      if (window.widget) {
+        executeInitWidget(window.widget);
       } else {
         setTimeout(widgetLoading, 100);
       }
