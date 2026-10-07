@@ -375,7 +375,7 @@ require([
       var all = res[0], kids = res[1];
       var list = all.parts;
       var at = enterpriseAttrs(d);
-      var pn = at.partNo || it.title;   // PartNo wins; Title is only a flagged fallback
+      var pn = at.partNo || it.title;   // Title is used only for the existence check; an empty PartNo blocks sending
       var existing = list.filter(function (p) { return p.part_number === pn; })[0] || null;
       var partialNote = (!existing && all.incomplete)
         ? ' Note: the Epsilon3 list could not be read completely (' + all.incomplete + '), so the part might already exist.'
@@ -395,22 +395,22 @@ require([
   function buildSendForm(box, it, d, existing, closeBtn, kids, e3parts, at, pn) {
     var isNew = !existing;
 
-    // Flags: anything the SolidWorks attributes did not supply. Tracking/procurement only matter for a new part.
+    // The SolidWorks attributes are the only source for part number, tracking and procurement type.
+    // Any empty or unrecognized one blocks sending (for new AND existing parts); there is no override here.
     var flags = [], usedTitle = !at.partNo;
     if (!at.present) { flags.push('3DX returned no enterprise attributes for this part.'); }
-    if (usedTitle) { flags.push('PartNo is empty. The 3DX Title "' + it.title + '" would be used as the part number.'); }
-    if (isNew && !at.tracking) {
+    if (usedTitle) { flags.push('PartNo is empty.'); }
+    if (!at.tracking) {
       flags.push(at.trackingRaw ? 'Tracking value "' + at.trackingRaw + '" is not None, Lot or Serial.' : 'Tracking is empty.');
     }
-    if (isNew && !at.procurement) {
+    if (!at.procurement) {
       flags.push(at.procurementRaw ? 'ProcurementType value "' + at.procurementRaw + '" is not Make, Buy or Make/Buy.' : 'ProcurementType is empty.');
     }
-    var ack = null;
     if (flags.length) {
       var fb = document.createElement('div');
       fb.style.cssText = 'border:1px solid #b00020;background:#fff0f0;color:#b00020;padding:6px;margin:6px 0';
       var ul = document.createElement('div');
-      ul.textContent = 'Needs attention before sending:';
+      ul.textContent = 'Sending is blocked:';
       fb.appendChild(ul);
       flags.forEach(function (f) {
         var li = document.createElement('div');
@@ -421,29 +421,20 @@ require([
       note.style.fontWeight = 'bold';
       note.textContent = 'Modify Attributes in SolidWorks and reload 3DX.';
       fb.appendChild(note);
-      if (usedTitle) {
-        var lab = document.createElement('label');
-        ack = document.createElement('input');
-        ack.type = 'checkbox';
-        lab.appendChild(ack);
-        lab.appendChild(document.createTextNode(' Use the Title as the Epsilon3 part number anyway'));
-        fb.appendChild(lab);
-      }
       box.appendChild(fb);
     }
 
-    field(box, 'Part number (3DX PartNo' + (usedTitle ? ', fallback to Title' : '') + '):', input(pn, true));
+    field(box, 'Part number (3DX PartNo):', input(at.partNo, true));
     field(box, 'Revision (3DX, sent as is):', input(it.revision, true));
     var name = field(box, 'Name:', input(d.title || it.title, !isNew, 128));
     var desc = field(box, 'Description:', input(d.description || '', !isNew, 512));
     var tracking = field(box, 'Tracking:', select([['', '-- choose --'], ['serial', 'serial'], ['lot', 'lot'], ['none', 'none']]));
     var proc = field(box, 'Procurement type:', select([['', '-- choose --'], ['buy', 'buy'], ['make', 'make'], ['make or buy', 'make or buy']]));
     var proj = field(box, 'Project id (optional):', input('', !isNew));
-    // Values from the SolidWorks attributes are locked; an empty/unrecognized one is left for the operator.
     tracking.value = at.tracking;
     proc.value = at.procurement;
-    if (!isNew || at.tracking) { tracking.disabled = true; }
-    if (!isNew || at.procurement) { proc.disabled = true; }
+    tracking.disabled = true;
+    proc.disabled = true;
     var maturity = field(box, 'Maturity State (from 3DX "' + (it.state || '') + '"):',
       select([['', '-- choose --']].concat(E3_MATURITY_OPTIONS.map(function (o) { return [o, o]; }))));
     maturity.value = mapMaturity(it.state);
@@ -529,8 +520,7 @@ require([
       return [{ method: 'PATCH', path: '/v1/builds/parts/' + existing.id, body: body }];
     }
     function valid() {
-      if (!link.value.trim() || !maturity.value || !pn) { return false; }
-      if (ack && !ack.checked) { return false; }
+      if (flags.length || !link.value.trim() || !maturity.value) { return false; }
       return !isNew || (name.value.trim() && tracking.value && proc.value);
     }
     function refresh() {
@@ -539,10 +529,9 @@ require([
       }).join('\n\n');
       confirm.disabled = !valid();
       msg.textContent = valid() ? '' : (flags.length
-        ? 'Resolve the flagged items above (or fix the attributes in SolidWorks and reload 3DX) to enable sending.'
+        ? 'Fix the flagged attributes in SolidWorks and reload 3DX to enable sending.'
         : 'Fill in name, tracking, procurement type, maturity and the link to enable sending.');
     }
-    if (ack) { ack.addEventListener('change', function () { refresh(); }); }
     [name, desc, tracking, proc, proj, link, maturity].forEach(function (el) {
       el.addEventListener('input', refresh);
       el.addEventListener('change', refresh);
