@@ -158,7 +158,6 @@ require([
         var a = row.insertCell(); a.textContent = r[0]; a.style.fontWeight = 'bold';
         row.insertCell().textContent = r[1];
       });
-      cell.appendChild(t);
       var kidsBtn = document.createElement('button');
       kidsBtn.textContent = 'Show child instances (1 level)';
       kidsBtn.style.marginTop = '6px';
@@ -174,9 +173,16 @@ require([
         ev.stopPropagation();
         openSendDialog(it, obj);
       });
+      // Buttons and children first (always visible); the long field list is collapsed underneath.
       cell.appendChild(kidsBtn);
       cell.appendChild(sendBtn);
       cell.appendChild(kidsBox);
+      var fieldsDet = document.createElement('details');
+      var fieldsSum = document.createElement('summary');
+      fieldsSum.textContent = 'All fields (' + rows.length + ')';
+      fieldsDet.appendChild(fieldsSum);
+      fieldsDet.appendChild(t);
+      cell.appendChild(fieldsDet);
     }).catch(function (e) { cell.textContent = e.message; });
     dr.addEventListener('click', function (ev) { ev.stopPropagation(); });
   }
@@ -720,6 +726,13 @@ require([
     scrollCss.appendChild(document.createTextNode(
       'html, body { height: 100%; overflow-y: auto; overflow-x: auto; } body { box-sizing: border-box; padding-bottom: 40px; }'));
     document.getElementsByTagName('head')[0].appendChild(scrollCss);
+    // Fallback: the results area scrolls on its own, sized to the tile, even if the page itself cannot scroll.
+    var sizeResults = function () {
+      var h = Math.max(200, (window.innerHeight || 600) - 230);
+      $('results').style.cssText = 'max-height:' + h + 'px;overflow:auto';
+    };
+    sizeResults();
+    window.addEventListener('resize', sizeResults);
 
     // Built here (not in index.html) so a cached copy of the page can't hide it.
     var probe = document.createElement('details');
