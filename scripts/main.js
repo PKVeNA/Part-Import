@@ -207,7 +207,9 @@ require([
                      '?$mask=dsmveng:EngItemMask.Details', true).then(function (r) {
             var o = (r.member && r.member[0]) || r;
             k.title = o.title; k.revision = o.revision; k.state = o.state; k.name = o.name;
-            k.partNo = enterpriseAttrs(o).partNo;   // Epsilon3 part number for the child
+            k.at = enterpriseAttrs(o);              // SolidWorks attributes of the child
+            k.partNo = k.at.partNo;                 // Epsilon3 part number for the child
+            k.description = o.description || '';
             if (!k.title) { k.error = 'no Title on the referenced item'; }
           }).catch(function () { k.error = 'could not read the child part'; });
         });
@@ -406,6 +408,28 @@ require([
     if (!at.procurement) {
       flags.push(at.procurementRaw ? 'ProcurementType value "' + at.procurementRaw + '" is not Make, Buy or Make/Buy.' : 'ProcurementType is empty.');
     }
+    // Children (one level): same attribute rules as the parent, then compare with Epsilon3 by part number + revision.
+    var childPlans = [], seenPn = {};
+    (kids || []).forEach(function (k) {
+      var kat = k.at, reasons = [];
+      if (!k.title || !kat) {
+        reasons.push(k.error || 'could not be read');
+      } else {
+        if (!kat.partNo) { reasons.push('PartNo is empty'); }
+        if (!kat.tracking) { reasons.push(kat.trackingRaw ? 'Tracking "' + kat.trackingRaw + '" is not None, Lot or Serial' : 'Tracking is empty'); }
+        if (!kat.procurement) { reasons.push(kat.procurementRaw ? 'ProcurementType "' + kat.procurementRaw + '" is not Make, Buy or Make/Buy' : 'ProcurementType is empty'); }
+        if (!mapMaturity(k.state)) { reasons.push('maturity "' + (k.state || '') + '" is not an Epsilon3 option'); }
+        if (kat.partNo && seenPn[kat.partNo]) { reasons.push('same PartNo as another child'); }
+        if (kat.partNo) { seenPn[kat.partNo] = true; }
+      }
+      var cpn = kat && kat.partNo;
+      var e3c = cpn ? e3parts.filter(function (p) { return p.part_number === cpn; })[0] : null;
+      var action = reasons.length ? 'blocked' : !e3c ? 'create' : (e3c.revision === k.revision ? 'ok' : 'revise');
+      childPlans.push({ k: k, pn: cpn, e3: e3c, action: action, reasons: reasons });
+      if (reasons.length) { flags.push('Child ' + (k.title || k.instName) + ': ' + reasons.join('; ') + '.'); }
+    });
+    if (kids && kids.truncated) { flags.push('More than ' + MAX_CHILD_PARTS + ' distinct children; a partial list will not be sent.'); }
+
     if (flags.length) {
       var fb = document.createElement('div');
       fb.style.cssText = 'border:1px solid #b00020;background:#fff0f0;color:#b00020;padding:6px;margin:6px 0';
@@ -430,7 +454,9 @@ require([
     var desc = field(box, 'Description:', input(d.description || '', !isNew, 512));
     var tracking = field(box, 'Tracking:', select([['', '-- choose --'], ['serial', 'serial'], ['lot', 'lot'], ['none', 'none']]));
     var proc = field(box, 'Procurement type:', select([['', '-- choose --'], ['buy', 'buy'], ['make', 'make'], ['make or buy', 'make or buy']]));
-    var proj = field(box, 'Project id (optional):', input('', !isNew));
+    var creatingChildren = childPlans.some(function (c) { return c.action === 'create'; });
+    var proj = field(box, 'Project id (optional' + (isNew ? '' : ', applies to new children only') + '):',
+                     input('', !isNew && !creatingChildren));
     tracking.value = at.tracking;
     proc.value = at.procurement;
     tracking.disabled = true;
@@ -441,42 +467,69 @@ require([
     field(box, '3DX Name:', input(it.name, true));
     var link = field(box, '3DX Link:', input(spaceUrl + '/resources/v1/modeler/dseng/dseng:EngItem/' + it.id, false, 1000));
 
-    // Components: one level of 3DX children. A child can be included only if it already exists in
-    // Epsilon3 under the same part number AND the same revision as 3DX (strict revision rule).
-    var compChecks = [];
-    if (kids && kids.length) {
+    // Linking: children are written to Epsilon3 first (create / new revision as needed), then the parent
+    // with `components` attached. One level only: a child's own children are not followed.
+    var includeLinks = null;
+    if (childPlans.length) {
       var ch = document.createElement('div');
       ch.style.cssText = 'font-weight:bold;margin-top:6px';
-      ch.textContent = 'Components (3DX children, one level)' +
-        (isNew ? '' : ' - ticking any REPLACES the component list already in Epsilon3');
+      ch.textContent = 'Linked parts (3DX children, one level), written before the parent:';
       box.appendChild(ch);
-      kids.forEach(function (k) {
+      var lab = document.createElement('label');
+      includeLinks = document.createElement('input');
+      includeLinks.type = 'checkbox';
+      includeLinks.checked = true;
+      lab.appendChild(includeLinks);
+      lab.appendChild(document.createTextNode(isNew
+        ? ' Create the children below as needed and link them to this part'
+        : ' Create the children below as needed and link them to this part (REPLACES the component list already in Epsilon3)'));
+      box.appendChild(lab);
+      childPlans.forEach(function (c) {
+        var k = c.k, text;
+        if (c.action === 'blocked') { text = 'BLOCKED - ' + c.reasons.join('; '); }
+        else if (c.action === 'create') { text = 'not in Epsilon3: will be CREATED (tracking ' + k.at.tracking + ', procurement ' + k.at.procurement + ')'; }
+        else if (c.action === 'revise') { text = 'Epsilon3 has revision ' + c.e3.revision + ': will get NEW revision ' + k.revision; }
+        else { text = 'already in Epsilon3 at revision ' + k.revision + ': left unchanged'; }
         var row = document.createElement('div');
-        var cb = document.createElement('input');
-        cb.type = 'checkbox';
-        var kpn = k.partNo || k.title;
-        var e3 = kpn ? e3parts.filter(function (p) { return p.part_number === kpn; })[0] : null;
-        var status;
-        if (!k.title) { status = 'cannot include: ' + (k.error || 'unresolved'); }
-        else if (!e3) { status = 'cannot include: not in Epsilon3 yet (send it first)'; }
-        else if (e3.revision !== k.revision) { status = 'cannot include: Epsilon3 has revision ' + e3.revision + ', 3DX has ' + k.revision; }
-        else { status = 'in Epsilon3'; }
-        var ok = k.title && e3 && e3.revision === k.revision;
-        cb.disabled = !ok;
-        cb.checked = !!ok && isNew;
-        row.appendChild(cb);
-        row.appendChild(document.createTextNode(' ' + (k.title || k.instName) + ' rev ' + (k.revision || '?') +
-                                                ' x ' + k.qty + ' - ' + status));
+        row.textContent = '• ' + (c.pn || k.title || k.instName) + ' rev ' + (k.revision || '?') + ' x ' + k.qty + ' - ' + text;
+        if (c.action === 'blocked') { row.style.color = '#b00020'; }
         box.appendChild(row);
-        compChecks.push({ cb: cb, kid: k });
-        cb.addEventListener('change', function () { refresh(); });
       });
-      if (kids.truncated) { box.appendChild(document.createTextNode('Only the first ' + MAX_CHILD_PARTS + ' distinct children are listed.')); }
+      var warn = document.createElement('div');
+      warn.style.fontSize = '12px';
+      warn.textContent = 'Children are written without their own components (one level only). Children share the Project id entered above.';
+      box.appendChild(warn);
     }
+    function linksOn() { return !!(includeLinks && includeLinks.checked); }
     function chosenComponents() {
-      return compChecks.filter(function (c) { return c.cb.checked; }).map(function (c) {
-        return { part_number: (c.kid.partNo || c.kid.title), revision: c.kid.revision, quantity: c.kid.qty };
+      return linksOn() ? childPlans.map(function (c) {
+        return { part_number: c.pn, revision: c.k.revision, quantity: c.k.qty };
+      }) : [];
+    }
+    function childSteps() {
+      var steps = [];
+      if (!linksOn()) { return steps; }
+      childPlans.forEach(function (c) {
+        var k = c.k;
+        var cdetails = [
+          { id: E3_FIELD_3DX_NAME, value: { recorded: k.name } },
+          { id: E3_FIELD_3DX_LINK, value: { recorded: spaceUrl + '/resources/v1/modeler/dseng/dseng:EngItem/' + k.refId } },
+          { id: E3_FIELD_MATURITY, value: { recorded: mapMaturity(k.state) } }
+        ];
+        if (c.action === 'create') {
+          var cp = {
+            part_number: c.pn, name: k.title, revision: k.revision,
+            tracking: k.at.tracking, procurement_type: k.at.procurement, form_id: E3_PART_FORM_ID
+          };
+          if (k.description) { cp.description = k.description.slice(0, 512); }
+          if (proj.value.trim()) { cp.project_id = proj.value.trim(); }
+          steps.push({ method: 'POST', path: '/v1/builds/parts', body: { parts: [cp] }, captureAs: c.pn });
+          steps.push({ method: 'PATCH', path: '/v1/builds/parts/<id:' + c.pn + '>', body: { details: cdetails } });
+        } else if (c.action === 'revise') {
+          steps.push({ method: 'PATCH', path: '/v1/builds/parts/' + c.e3.id, body: { revision: k.revision, details: cdetails } });
+        }
       });
+      return steps;
     }
 
     var prevLabel = document.createElement('div');
@@ -508,16 +561,16 @@ require([
         if (proj.value.trim()) { part.project_id = proj.value.trim(); }
         var comps = chosenComponents();
         if (comps.length) { part.assembly = true; part.components = comps; }
-        return [
-          { method: 'POST', path: '/v1/builds/parts', body: { parts: [part] } },
-          { method: 'PATCH', path: '/v1/builds/parts/<id returned by the step above>', body: { details: details } }
-        ];
+        return childSteps().concat([
+          { method: 'POST', path: '/v1/builds/parts', body: { parts: [part] }, captureAs: pn },
+          { method: 'PATCH', path: '/v1/builds/parts/<id:' + pn + '>', body: { details: details } }
+        ]);
       }
       var body = { details: details };
       if (existing.revision !== it.revision) { body.revision = it.revision; }
       var ecomps = chosenComponents();
       if (ecomps.length) { body.components = ecomps; if (!existing.assembly) { body.assembly = true; } }
-      return [{ method: 'PATCH', path: '/v1/builds/parts/' + existing.id, body: body }];
+      return childSteps().concat([{ method: 'PATCH', path: '/v1/builds/parts/' + existing.id, body: body }]);
     }
     function valid() {
       if (flags.length || !link.value.trim() || !maturity.value) { return false; }
@@ -536,30 +589,35 @@ require([
       el.addEventListener('input', refresh);
       el.addEventListener('change', refresh);
     });
+    if (includeLinks) { includeLinks.addEventListener('change', refresh); }
     refresh();
 
     confirm.addEventListener('click', function () {
       confirm.disabled = true;
-      var steps = plan(), newId = null;
+      var steps = plan(), ids = {}, done = 0;
       msg.className = '';
       msg.textContent = 'Sending...';
+      // Sequential; stops at the first failure so nothing is linked to a part that was not written.
       steps.reduce(function (chain, s) {
         return chain.then(function () {
-          var path = s.path.replace('<id returned by the step above>', newId || '');
+          msg.textContent = 'Sending step ' + (done + 1) + ' of ' + steps.length + '...';
+          var path = s.path.replace(/<id:([^>]*)>/, function (m, key) { return ids[key] || ''; });
           return e3Request(s.method, path, s.body).then(function (res) {
-            if (s.method === 'POST') {
+            if (s.captureAs) {
               var p = (res.parts && res.parts[0]) || res;
-              newId = p.id;
-              if (!newId) { throw new Error('Epsilon3 did not return a part id (see Raw response).'); }
+              if (!p.id) { throw new Error('Epsilon3 did not return a part id (see Raw response).'); }
+              ids[s.captureAs] = p.id;
             }
+            done++;
           });
         });
       }, Promise.resolve()).then(function () {
-        msg.textContent = 'Done. The part was written to Epsilon3. The last response is in Raw response.';
-        setStatus('Sent ' + pn + ' rev ' + it.revision + ' to Epsilon3.');
+        msg.textContent = 'Done. ' + done + ' request(s) completed. The last response is in Raw response.';
+        setStatus('Sent ' + pn + ' rev ' + it.revision + ' to Epsilon3 (' + done + ' request(s)).');
       }).catch(function (e) {
         msg.className = 'err';
-        msg.textContent = e.message + ' (Check Epsilon3: an earlier step may already have been applied.)';
+        msg.textContent = e.message + ' Stopped after ' + done + ' of ' + steps.length +
+          ' request(s). Check Epsilon3: the earlier steps were already applied.';
       });
     });
   }
