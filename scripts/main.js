@@ -173,10 +173,20 @@ require([
         ev.stopPropagation();
         openSendDialog(it, obj);
       });
+      var filesBtn = document.createElement('button');
+      filesBtn.textContent = 'List documents and files (probe)';
+      filesBtn.style.cssText = 'margin-top:6px;margin-left:8px';
+      var filesBox = document.createElement('div');
+      filesBtn.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        loadFiles(it, filesBox);
+      });
       // Buttons and children first (always visible); the long field list is collapsed underneath.
       cell.appendChild(kidsBtn);
       cell.appendChild(sendBtn);
+      cell.appendChild(filesBtn);
       cell.appendChild(kidsBox);
+      cell.appendChild(filesBox);
       var fieldsDet = document.createElement('details');
       var fieldsSum = document.createElement('summary');
       fieldsSum.textContent = 'All fields (' + rows.length + ')';
@@ -185,6 +195,39 @@ require([
       cell.appendChild(fieldsDet);
     }).catch(function (e) { cell.textContent = e.message; });
     dr.addEventListener('click', function (ev) { ev.stopPropagation(); });
+  }
+
+  /* Read-only probe: what documents/files does 3DX expose for one part the user clicked?
+     Tries a few GET endpoints (paths are unverified) and shows each response, or its error, as is. */
+  function loadFiles(it, box) {
+    box.textContent = '';
+    box.style.cssText = 'max-height:420px;overflow:auto;border:1px solid #ccd;margin-top:6px;padding:4px;background:#fff';
+    var id = encodeURIComponent(it.id);
+    var candidates = [
+      ['Documents attached to the part', '/resources/v1/modeler/documents/parentId/' + id],
+      ['CAD part representation', '/resources/v1/modeler/dsxcad/dsxcad:Part/' + id]
+    ];
+    var loading = document.createElement('div');
+    loading.textContent = 'Probing ' + candidates.length + ' endpoints (GET only)...';
+    box.appendChild(loading);
+    candidates.reduce(function (chain, c) {
+      return chain.then(function () {
+        var head = document.createElement('div');
+        head.style.cssText = 'font-weight:bold;margin-top:6px';
+        head.textContent = c[0] + ': GET ' + c[1];
+        box.appendChild(head);
+        var pre = document.createElement('pre');
+        box.appendChild(pre);
+        return get(c[1], true).then(function (data) {
+          var text = JSON.stringify(data, null, 2);
+          pre.textContent = text.length > 6000 ? text.slice(0, 6000) + '\n... (truncated, ' + text.length + ' characters)' : text;
+        }).catch(function (e) {
+          pre.textContent = 'FAILED: ' + e.message;
+        });
+      });
+    }, Promise.resolve()).then(function () {
+      loading.textContent = 'Done. Each endpoint above shows its response or error.';
+    });
   }
 
   /* One level of child instances for a part the user clicked. Never recursive.
