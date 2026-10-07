@@ -219,7 +219,7 @@ require([
 
   function loadChildren(it, box) {
     box.textContent = 'Loading children...';
-    box.style.cssText = 'max-height:240px;overflow:auto;border:1px solid #ccd;margin-top:6px;padding:4px;background:#fff';
+    box.style.cssText = 'max-height:420px;overflow:auto;border:1px solid #ccd;margin-top:6px;padding:4px;background:#fff';
     fetchChildren(it).then(function (kids) {
       box.textContent = '';
       if (!kids.length) { box.textContent = 'No child instances returned (see Raw response).'; return; }
@@ -713,6 +713,14 @@ require([
   function init() {
     $('lookup').addEventListener('click', lookupFromBox);
     $('title').addEventListener('keydown', function (e) { if (e.keyCode === 13) { lookupFromBox(); } });
+    // Make the whole widget scroll when expanded rows/tables are taller than the tile.
+    // Added from script (not index.html) so a cached copy of the page can't hide it.
+    var scrollCss = document.createElement('style');
+    scrollCss.type = 'text/css';
+    scrollCss.appendChild(document.createTextNode(
+      'html, body { height: 100%; overflow-y: auto; overflow-x: auto; } body { box-sizing: border-box; padding-bottom: 40px; }'));
+    document.getElementsByTagName('head')[0].appendChild(scrollCss);
+
     // Built here (not in index.html) so a cached copy of the page can't hide it.
     var probe = document.createElement('details');
     probe.innerHTML = '<summary>Epsilon3 probe (read-only GET)</summary>' +
